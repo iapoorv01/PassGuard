@@ -12,6 +12,10 @@ import base64
 import random
 import string
 import re
+import cv2
+import face_recognition
+import psutil
+import uuid
 
 # Initialize Firebase
 cred = credentials.Certificate("password_manager.json")
@@ -20,32 +24,28 @@ db = firestore.client()
 users_ref = db.collection("users")
 credentials_ref = db.collection("credentials")
 
-
-# Encryption/Decryption Functions (unchanged)
-def encrypt_with_master_password(data, master_password):
+# Encryption/Decryption Functions
+def encrypt_with_key(data, key):
     salt = get_random_bytes(16)
-    key = scrypt(master_password.encode(), salt, 32, N=2 ** 14, r=8, p=1)
-    cipher = AES.new(key, AES.MODE_GCM)
+    derived_key = scrypt(key.encode() if isinstance(key, str) else key, salt, 32, N=2**14, r=8, p=1)
+    cipher = AES.new(derived_key, AES.MODE_GCM)
     ciphertext, tag = cipher.encrypt_and_digest(data)
-    encrypted_data = salt + cipher.nonce + tag + ciphertext
-    return base64.b64encode(encrypted_data).decode()
+    return base64.b64encode(salt + cipher.nonce + tag + ciphertext).decode()
 
-
-def decrypt_with_master_password(encrypted_data, master_password):
+def decrypt_with_key(encrypted_data, key):
     try:
         data = base64.b64decode(encrypted_data)
         salt, iv, tag, ciphertext = data[:16], data[16:32], data[32:48], data[48:]
-        key = scrypt(master_password.encode(), salt, 32, N=2 ** 14, r=8, p=1)
-        cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
+        derived_key = scrypt(key.encode() if isinstance(key, str) else key, salt, 32, N=2**14, r=8, p=1)
+        cipher = AES.new(derived_key, AES.MODE_GCM, nonce=iv)
         return cipher.decrypt_and_verify(ciphertext, tag)
     except ValueError as e:
         print(f"Decryption failed: {e}")
         return None
 
-
 def encrypt_password(password, master_password, public_key):
     salt = get_random_bytes(16)
-    key = scrypt(master_password.encode(), salt, 32, N=2 ** 14, r=8, p=1)
+    key = scrypt(master_password.encode(), salt, 32, N=2**14, r=8, p=1)
     cipher = AES.new(key, AES.MODE_GCM)
     encrypted_password, tag = cipher.encrypt_and_digest(password.encode())
     rsa_cipher = PKCS1_OAEP.new(RSA.import_key(public_key))
@@ -58,7 +58,6 @@ def encrypt_password(password, master_password, public_key):
         "encrypted_key": base64.b64encode(encrypted_key).decode()
     }
 
-
 def decrypt_password(encrypted_data, master_password, private_key):
     salt = base64.b64decode(encrypted_data["salt"])
     nonce = base64.b64decode(encrypted_data["nonce"])
@@ -70,26 +69,37 @@ def decrypt_password(encrypted_data, master_password, private_key):
     cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
     return cipher.decrypt_and_verify(encrypted_password, tag).decode()
 
-
-def generate_and_store_keys(user_id, master_password):
+def generate_and_store_keys(user_id, master_password, face_encoding=None, device_id=None, trusted_contact_id=None):
     key = RSA.generate(1024)  # Use 4096 in production
     private_key = key.export_key()
     public_key = key.publickey().export_key()
-    encrypted_private_key = encrypt_with_master_password(private_key, master_password)
-    users_ref.document(user_id).set({
+    encrypted_private_key = encrypt_with_key(private_key, master_password)
+
+    user_data = {
         "public_key": public_key.decode(),
         "encrypted_private_key": encrypted_private_key
-    })
+    }
+    if face_encoding is not None:
+        face_key = base64.b64encode(face_encoding).decode()
+        user_data["face_recovery_key"] = encrypt_with_key(private_key, face_key)
+        user_data["face_encoding"] = base64.b64encode(face_encoding).decode()
+    if device_id is not None:
+        user_data["device_recovery_key"] = encrypt_with_key(private_key, device_id)
+    if trusted_contact_id:
+        contact_doc = users_ref.document(trusted_contact_id).get()
+        if contact_doc.exists:
+            contact_public_key = contact_doc.to_dict()["public_key"]
+            user_data["contact_recovery_key"] = encrypt_with_key(private_key, contact_public_key)
+            user_data["trusted_contact_id"] = trusted_contact_id
+
+    users_ref.document(user_id).set(user_data)
     return public_key, private_key
 
-
-# Password Generator Function
+# Password Generator and Strength Checker
 def generate_password(length=16):
     characters = string.ascii_letters + string.digits + string.punctuation
     return ''.join(random.choice(characters) for _ in range(length))
 
-
-# Password Strength Checker
 def check_password_strength(password):
     length = len(password)
     has_upper = bool(re.search(r'[A-Z]', password))
@@ -105,13 +115,9 @@ def check_password_strength(password):
     if has_digit: score += 1
     if has_special: score += 1
 
-    if score <= 2:
-        return "Weak", "#FF6B6B"
-    elif score <= 4:
-        return "Medium", "#FFD166"
-    else:
-        return "Strong", "#10B981"
-
+    if score <= 2: return "Weak", "#FF6B6B"
+    elif score <= 4: return "Medium", "#FFD166"
+    else: return "Strong", "#10B981"
 
 # Main Window
 class PasswordManagerWindow(QMainWindow):
@@ -173,9 +179,8 @@ class PasswordManagerWindow(QMainWindow):
         # Auto-Logout Timer
         self.inactivity_timer = QTimer(self)
         self.inactivity_timer.timeout.connect(self.logout)
-        self.inactivity_timer.setInterval(300000)  # 5 minutes in milliseconds
+        self.inactivity_timer.setInterval(300000)  # 5 minutes
 
-        # Apply theme
         self.apply_theme()
         self.showFullScreen()
         self.installEventFilter(self)
@@ -193,12 +198,10 @@ class PasswordManagerWindow(QMainWindow):
         if event.type() in (QEvent.Type.MouseMove, QEvent.Type.KeyPress, QEvent.Type.MouseButtonPress):
             self.reset_inactivity_timer()
         if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
-            print("Escape pressed, toggling fullscreen")
             if self.isFullScreen():
                 self.showNormal()
             else:
                 self.showFullScreen()
-            print(f"Window state: {'Fullscreen' if self.isFullScreen() else 'Normal'}")
             return True
         return super().eventFilter(obj, event)
 
@@ -268,18 +271,349 @@ class PasswordManagerWindow(QMainWindow):
         login_btn.clicked.connect(self.login)
         self.content_layout.addWidget(login_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        forgot_btn = QPushButton("Forgot Password?")
+        forgot_btn.setFont(QFont("Montserrat", 12))
+        forgot_btn.setStyleSheet("""
+            background: #FFD166; 
+            color: black; 
+            padding: 8px 20px; 
+            border-radius: 5px;
+        """)
+        forgot_btn.clicked.connect(self.show_recovery_options)
+        self.content_layout.addWidget(forgot_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def show_recovery_options(self):
+        self.clear_content()
+        title = QLabel("Recover Your Account")
+        title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        user_id = self.entries["username"].text()
+        if not user_id:
+            error = QLabel("Please enter your username first.")
+            error.setFont(QFont("Open Sans", 12))
+            error.setStyleSheet("color: #FF6B6B;")
+            self.content_layout.addWidget(error, alignment=Qt.AlignmentFlag.AlignCenter)
+            return
+
+        options = [
+            ("Face Scan", lambda: self.recover_with_face(user_id), "Use your webcam to scan your face"),
+            ("Device Fingerprint", lambda: self.recover_with_device(user_id), "Verify using this device"),
+            ("Trusted Contact", lambda: self.recover_with_contact(user_id), "Enter key from trusted contact")
+        ]
+        for text, cmd, desc in options:
+            btn_frame = QFrame()
+            btn_layout = QVBoxLayout(btn_frame)
+            btn = QPushButton(text)
+            btn.setFont(QFont("Montserrat", 14, QFont.Weight.Bold))
+            btn.setStyleSheet("""
+                background: #10B981; 
+                color: white; 
+                padding: 10px; 
+                border-radius: 5px;
+            """)
+            btn.clicked.connect(cmd)
+            btn_layout.addWidget(btn)
+            desc_label = QLabel(desc)
+            desc_label.setFont(QFont("Open Sans", 10))
+            desc_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
+            desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            btn_layout.addWidget(desc_label)
+            self.content_layout.addWidget(btn_frame, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def recover_with_face(self, user_id):
+        doc = users_ref.document(user_id).get()
+        if not doc.exists or "face_recovery_key" not in doc.to_dict():
+            self.show_error("Face scan not set up for this user.")
+            return
+
+        face_encoding = self.capture_face()
+        if face_encoding is None:
+            self.show_error("Failed to capture face. Ensure webcam is connected and face is visible.")
+            return
+
+        stored_encoding = base64.b64decode(doc.to_dict()["face_encoding"])
+        if face_recognition.compare_faces([stored_encoding], face_encoding)[0]:
+            private_key = decrypt_with_key(doc.to_dict()["face_recovery_key"], base64.b64encode(face_encoding).decode())
+            self.reset_master_password(user_id, private_key)
+        else:
+            self.show_error("Face does not match.")
+
+    def recover_with_device(self, user_id):
+        doc = users_ref.document(user_id).get()
+        if not doc.exists or "device_recovery_key" not in doc.to_dict():
+            self.show_error("Device fingerprint not set up for this user.")
+            return
+
+        device_id = self.get_device_id()
+        private_key = decrypt_with_key(doc.to_dict()["device_recovery_key"], device_id)
+        if private_key:
+            self.reset_master_password(user_id, private_key)
+        else:
+            self.show_error("This device does not match the original.")
+
+    def recover_with_contact(self, user_id):
+        doc = users_ref.document(user_id).get()
+        if not doc.exists or "contact_recovery_key" not in doc.to_dict():
+            self.show_error("Trusted contact not set up for this user.")
+            return
+
+        self.clear_content()
+        title = QLabel("Trusted Contact Recovery")
+        title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        lbl = QLabel("Enter recovery key from your trusted contact:")
+        lbl.setFont(QFont("Open Sans", 12))
+        lbl.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
+        self.content_layout.addWidget(lbl)
+        key_entry = QLineEdit()
+        key_entry.setFont(QFont("Open Sans", 14))
+        key_entry.setStyleSheet(f"""
+            background: {'#F5F6F5' if not self.is_dark_mode else '#3A3A3A'}; 
+            border: none; 
+            padding: 8px; 
+            border-radius: 5px; 
+            color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
+        """)
+        key_entry.setPlaceholderText("e.g., paste key provided by your contact")
+        palette = key_entry.palette()
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
+        key_entry.setPalette(palette)
+        self.content_layout.addWidget(key_entry)
+
+        submit_btn = QPushButton("Submit")
+        submit_btn.setFont(QFont("Montserrat", 12))
+        submit_btn.setStyleSheet("""
+            background: #4A90E2; 
+            color: white; 
+            padding: 8px 20px; 
+            border-radius: 5px;
+        """)
+        submit_btn.clicked.connect(lambda: self.verify_contact_key(user_id, key_entry.text()))
+        self.content_layout.addWidget(submit_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def verify_contact_key(self, user_id, contact_key):
+        doc = users_ref.document(user_id).get()
+        private_key = decrypt_with_key(doc.to_dict()["contact_recovery_key"], contact_key)
+        if private_key:
+            self.reset_master_password(user_id, private_key)
+        else:
+            self.show_error("Invalid recovery key.")
+
+    def reset_master_password(self, user_id, private_key):
+        self.clear_content()
+        title = QLabel("Reset Master Password")
+        title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        new_pass = QLineEdit()
+        new_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        new_pass.setStyleSheet(f"""
+            background: {'#F5F6F5' if not self.is_dark_mode else '#3A3A3A'}; 
+            border: none; 
+            padding: 8px; 
+            border-radius: 5px; 
+            color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
+        """)
+        new_pass.setPlaceholderText("Enter new master password")
+        palette = new_pass.palette()
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
+        new_pass.setPalette(palette)
+        self.content_layout.addWidget(QLabel("New Master Password:"))
+        self.content_layout.addWidget(new_pass)
+
+        confirm_pass = QLineEdit()
+        confirm_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        confirm_pass.setStyleSheet(f"""
+            background: {'#F5F6F5' if not self.is_dark_mode else '#3A3A3A'}; 
+            border: none; 
+            padding: 8px; 
+            border-radius: 5px; 
+            color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
+        """)
+        confirm_pass.setPlaceholderText("Confirm new master password")
+        palette = confirm_pass.palette()
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
+        confirm_pass.setPalette(palette)
+        self.content_layout.addWidget(QLabel("Confirm Password:"))
+        self.content_layout.addWidget(confirm_pass)
+
+        save_btn = QPushButton("Save")
+        save_btn.setFont(QFont("Montserrat", 16, QFont.Weight.Bold))
+        save_btn.setStyleSheet("""
+            background: #4A90E2; 
+            color: white; 
+            padding: 10px; 
+            border-radius: 8px;
+        """)
+        save_btn.clicked.connect(lambda: self.save_new_password(user_id, private_key, new_pass.text(), confirm_pass.text()))
+        self.content_layout.addWidget(save_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def save_new_password(self, user_id, private_key, new_pass, confirm_pass):
+        if new_pass != confirm_pass:
+            self.show_error("Passwords do not match.")
+            return
+        encrypted_private_key = encrypt_with_key(private_key, new_pass)
+        users_ref.document(user_id).update({"encrypted_private_key": encrypted_private_key})
+        self.master_password = new_pass
+        self.private_key = private_key
+        self.user_id = user_id
+        self.public_key = users_ref.document(user_id).get().to_dict()["public_key"]
+        for btn in self.sidebar_buttons.values():
+            btn.setEnabled(True)
+        self.reset_inactivity_timer()
+        self.show_view_credentials()
+
+    def show_error(self, message):
+        self.clear_content()
+        error = QLabel(message)
+        error.setFont(QFont("Open Sans", 14))
+        error.setStyleSheet("color: #FF6B6B;")
+        self.content_layout.addWidget(error, alignment=Qt.AlignmentFlag.AlignCenter)
+        back_btn = QPushButton("Back to Login")
+        back_btn.setFont(QFont("Montserrat", 12))
+        back_btn.setStyleSheet("""
+            background: #4A90E2; 
+            color: white; 
+            padding: 8px 20px; 
+            border-radius: 5px;
+        """)
+        back_btn.clicked.connect(self.show_login)
+        self.content_layout.addWidget(back_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def capture_face(self):
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("Error: Could not open webcam.")
+            return None
+        ret, frame = cap.read()
+        if not ret:
+            print("Error: Could not read frame.")
+            cap.release()
+            return None
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        encodings = face_recognition.face_encodings(rgb_frame)
+        cap.release()
+        return encodings[0] if encodings else None
+
+    def get_device_id(self):
+        return str(uuid.getnode()) + str(psutil.disk_partitions()[0].device if psutil.disk_partitions() else "default")
+
+    def prompt_setup_recovery(self):
+        self.clear_content()
+        title = QLabel("Set Up Recovery Options")
+        title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        face_label = QLabel("Face Scan will be captured automatically.")
+        face_label.setFont(QFont("Open Sans", 12))
+        face_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
+        self.content_layout.addWidget(face_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        device_label = QLabel("Device fingerprint will be set for this device.")
+        device_label.setFont(QFont("Open Sans", 12))
+        device_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
+        self.content_layout.addWidget(device_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        contact_label = QLabel("Trusted Contact Username (optional):")
+        contact_label.setFont(QFont("Open Sans", 12))
+        contact_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
+        self.content_layout.addWidget(contact_label)
+        contact_entry = QLineEdit()
+        contact_entry.setFont(QFont("Open Sans", 14))
+        contact_entry.setStyleSheet(f"""
+            background: {'#F5F6F5' if not self.is_dark_mode else '#3A3A3A'}; 
+            border: none; 
+            padding: 8px; 
+            border-radius: 5px; 
+            color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
+        """)
+        contact_entry.setPlaceholderText("e.g., friend123")
+        palette = contact_entry.palette()
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
+        contact_entry.setPalette(palette)
+        self.content_layout.addWidget(contact_entry)
+
+        submit_btn = QPushButton("Complete Setup")
+        submit_btn.setFont(QFont("Montserrat", 16, QFont.Weight.Bold))
+        submit_btn.setStyleSheet("""
+            background: #4A90E2; 
+            color: white; 
+            padding: 10px; 
+            border-radius: 8px;
+        """)
+        submit_btn.clicked.connect(lambda: self.finish_setup(contact_entry.text()))
+        self.content_layout.addWidget(submit_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def finish_setup(self, trusted_contact_id):
+        face_encoding = self.capture_face()
+        if face_encoding is None:
+            self.show_error("Failed to capture face. Try again.")
+            return
+        device_id = self.get_device_id()
+        self.public_key, self.private_key = generate_and_store_keys(
+            self.user_id, self.master_password, face_encoding, device_id, trusted_contact_id or None
+        )
+        for btn in self.sidebar_buttons.values():
+            btn.setEnabled(True)
+        self.reset_inactivity_timer()
+        self.show_welcome_guide()
+
+    def login(self):
+        try:
+            user_id = self.entries["username"].text()
+            master_password = self.entries["password"].text()
+            doc = users_ref.document(user_id).get()
+            print(f"Logging in user: {user_id}")
+            if doc.exists:
+                encrypted_private_key = doc.to_dict()["encrypted_private_key"]
+                self.public_key = doc.to_dict()["public_key"]
+                self.private_key = decrypt_with_key(encrypted_private_key, master_password)
+                if self.private_key is None:
+                    raise ValueError("Failed to decrypt private key - wrong master password?")
+                self.user_id = user_id
+                self.master_password = master_password
+                print(f"Login successful for {user_id}")
+                for btn in self.sidebar_buttons.values():
+                    btn.setEnabled(True)
+                self.reset_inactivity_timer()
+                self.show_view_credentials()
+            else:
+                self.user_id = user_id
+                self.master_password = master_password
+                self.prompt_setup_recovery()
+        except Exception as e:
+            error_label = QLabel(f"Login failed: {str(e)}")
+            error_label.setFont(QFont("Open Sans", 12))
+            error_label.setStyleSheet("color: red;")
+            self.content_layout.addWidget(error_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def logout(self):
+        self.inactivity_timer.stop()
+        self.user_id = None
+        self.master_password = None
+        self.public_key = None
+        self.private_key = None
+        self.password_labels.clear()
+        for btn in self.sidebar_buttons.values():
+            btn.setEnabled(False)
+        print("Logged out")
+        self.show_login()
+
     def show_settings(self):
         self.clear_content()
         self.content_layout.setSpacing(20)
-
         settings_container = QWidget()
         settings_container.setFixedWidth(600)
         settings_container.setFixedHeight(500)
         settings_layout = QVBoxLayout(settings_container)
         settings_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         settings_layout.setSpacing(20)
-
-        settings_layout.addSpacing(30)
 
         title = QLabel("Settings")
         title.setFont(QFont("Montserrat", 48, QFont.Weight.Bold))
@@ -290,29 +624,17 @@ class PasswordManagerWindow(QMainWindow):
         account_frame.setStyleSheet(f"""
             background: {'#F9FAFB' if not self.is_dark_mode else '#313131'};
             border-radius: 10px;
-            padding-top: 0px;
-            padding-right: 0px;
-            padding-bottom: 0px;
-            padding-left: 0px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.1);
         """)
         account_layout = QHBoxLayout(account_frame)
-        account_layout.setSpacing(0)
         account_icon = QLabel("👤")
         account_icon.setFont(QFont("Open Sans", 50))
         account_icon.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
         account_layout.addWidget(account_icon)
         account_label = QLabel(f"{self.user_id}")
         account_label.setFont(QFont("Open Sans", 38, QFont.Weight.Medium))
-        account_label.setStyleSheet(f"""
-            color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
-            padding-top: 0px;
-            padding-right: 10px;
-            padding-bottom: 0px;
-            padding-left: 0px;
-        """)
+        account_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
         account_layout.addWidget(account_label)
-
         settings_layout.addWidget(account_frame)
 
         theme_btn = QPushButton("Switch to Dark Mode" if not self.is_dark_mode else "Switch to Light Mode")
@@ -330,7 +652,6 @@ class PasswordManagerWindow(QMainWindow):
                 background: #357ABD;
             }
         """)
-        theme_btn.setFixedWidth(300)
         theme_btn.clicked.connect(self.toggle_theme)
         settings_layout.addWidget(theme_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -349,7 +670,6 @@ class PasswordManagerWindow(QMainWindow):
                 background: #E55A5A;
             }
         """)
-        logout_btn.setFixedWidth(300)
         logout_btn.clicked.connect(self.logout)
         settings_layout.addWidget(logout_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -368,7 +688,6 @@ class PasswordManagerWindow(QMainWindow):
                 background: #059669;
             }
         """)
-        contact_btn.setFixedWidth(300)
         contact_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.linkedin.com/in/-apoorv-/")))
         settings_layout.addWidget(contact_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -387,37 +706,10 @@ class PasswordManagerWindow(QMainWindow):
                 background: #4B5563;
             }
         """)
-        about_btn.setFixedWidth(300)
         about_btn.clicked.connect(self.show_about)
         settings_layout.addWidget(about_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.content_layout.addWidget(settings_container, alignment=Qt.AlignmentFlag.AlignCenter)
-
-    def show_welcome_guide(self):
-        self.clear_content()
-        title = QLabel("Welcome to PassGuard!")
-        title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
-        self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        guide_text = QLabel(
-            "Here’s how to get started:\n\n"
-            "1. Click 'Add Credential' to save a new password.\n"
-            "2. Fill in the website, username, password, and category—then hit 'Save'.\n"
-            "3. Use 'View Credentials' to see your saved entries—search or filter by category.\n"
-            "4. Click 'Show' to reveal, 'Copy' to paste, or 'Edit' to update.\n\n"
-            "Your data is encrypted—keep your master password safe!"
-        )
-        guide_text.setFont(QFont("Open Sans", 12))
-        guide_text.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'}; padding: 10px;")
-        guide_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.content_layout.addWidget(guide_text)
-
-        start_btn = QPushButton("Got it, let’s start!")
-        start_btn.setFont(QFont("Montserrat", 16, QFont.Weight.Bold))
-        start_btn.setStyleSheet("background: #4A90E2; color: white; padding: 10px; border-radius: 8px;")
-        start_btn.clicked.connect(self.show_add_credential)
-        self.content_layout.addWidget(start_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
     def toggle_theme(self):
         self.is_dark_mode = not self.is_dark_mode
@@ -453,6 +745,37 @@ class PasswordManagerWindow(QMainWindow):
         back_btn.clicked.connect(self.show_settings)
         self.content_layout.addWidget(back_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
+    def show_welcome_guide(self):
+        self.clear_content()
+        title = QLabel("Welcome to PassGuard!")
+        title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        guide_text = QLabel(
+            "Here’s how to get started:\n\n"
+            "1. Click 'Add Credential' to save a new password.\n"
+            "2. Fill in the website, username, password, and category—then hit 'Save'.\n"
+            "3. Use 'View Credentials' to see your saved entries—search or filter by category.\n"
+            "4. Click 'Show' to reveal, 'Copy' to paste, or 'Edit' to update.\n\n"
+            "Your data is encrypted—keep your master password safe!"
+        )
+        guide_text.setFont(QFont("Open Sans", 12))
+        guide_text.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'}; padding: 10px;")
+        guide_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.content_layout.addWidget(guide_text)
+
+        start_btn = QPushButton("Got it, let’s start!")
+        start_btn.setFont(QFont("Montserrat", 16, QFont.Weight.Bold))
+        start_btn.setStyleSheet("""
+            background: #4A90E2; 
+            color: white; 
+            padding: 10px; 
+            border-radius: 8px;
+        """)
+        start_btn.clicked.connect(self.show_add_credential)
+        self.content_layout.addWidget(start_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
     def show_add_credential(self):
         self.clear_content()
         title = QLabel("Add Credential")
@@ -465,7 +788,7 @@ class PasswordManagerWindow(QMainWindow):
             ("Website", "website", "e.g., example.com"),
             ("Username", "username", "e.g., yourname"),
             ("Password", "password", "Enter your password"),
-            ("Category", "category", "e.g., Work, Personal")  # Changed from "Tag" to "Category"
+            ("Category", "category", "e.g., Work, Personal")
         ]:
             lbl = QLabel(label)
             lbl.setFont(QFont("Open Sans", 12))
@@ -489,7 +812,6 @@ class PasswordManagerWindow(QMainWindow):
             self.content_layout.addWidget(entry)
             entries[key] = entry
 
-        # Password Strength Indicator
         strength_label = QLabel("Password Strength: N/A")
         strength_label.setFont(QFont("Open Sans", 12))
         strength_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
@@ -520,7 +842,12 @@ class PasswordManagerWindow(QMainWindow):
 
         save_btn = QPushButton("Save")
         save_btn.setFont(QFont("Montserrat", 16, QFont.Weight.Bold))
-        save_btn.setStyleSheet("background: #4A90E2; color: white; padding: 10px; border-radius: 8px;")
+        save_btn.setStyleSheet("""
+            background: #4A90E2; 
+            color: white; 
+            padding: 10px; 
+            border-radius: 8px;
+        """)
         save_btn.clicked.connect(lambda: self.store_credential(entries))
         self.content_layout.addWidget(save_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -531,7 +858,6 @@ class PasswordManagerWindow(QMainWindow):
         title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
         self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Search Bar
         search_bar = QLineEdit()
         search_bar.setFont(QFont("Open Sans", 14))
         search_bar.setStyleSheet(f"""
@@ -547,7 +873,6 @@ class PasswordManagerWindow(QMainWindow):
         search_bar.setPalette(palette)
         self.content_layout.addWidget(search_bar)
 
-        # Category Filter (changed from Tag Filter)
         category_filter = QComboBox()
         category_filter.setFont(QFont("Open Sans", 12))
         category_filter.setStyleSheet(f"""
@@ -585,7 +910,6 @@ class PasswordManagerWindow(QMainWindow):
             search_text = search_bar.text().lower()
             selected_category = category_filter.currentText()
             docs = credentials_ref.where("user_id", "==", self.user_id).stream()
-            count = 0
             for doc in docs:
                 data = doc.to_dict()
                 data["doc_id"] = doc.id
@@ -593,8 +917,7 @@ class PasswordManagerWindow(QMainWindow):
                 username = data["username"].lower()
                 category = data.get("category", "")
                 if (search_text in website or search_text in username) and \
-                        (selected_category == "All Categories" or category == selected_category):
-                    count += 1
+                   (selected_category == "All Categories" or category == selected_category):
                     item = QListWidgetItem()
                     widget = QWidget()
                     layout = QHBoxLayout(widget)
@@ -606,86 +929,84 @@ class PasswordManagerWindow(QMainWindow):
                     label = QLabel(label_text)
                     label.setFont(QFont("Open Sans", 12))
                     label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
-                    label.setMinimumHeight(30)
                     layout.addWidget(label)
 
                     password_label = QLabel("••••••••")
                     password_label.setFont(QFont("Open Sans", 12))
                     password_label.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
-                    password_label.setMinimumHeight(30)
-                    layout.addWidget(password_label)
                     self.password_labels[data["doc_id"]] = password_label
+                    layout.addWidget(password_label)
 
                     show_btn = QPushButton("Show")
                     show_btn.setFont(QFont("Montserrat", 10))
-                    show_btn.setStyleSheet("background: #4A90E2; color: white; padding: 5px; border-radius: 5px;")
+                    show_btn.setStyleSheet("""
+                        background: #4A90E2; 
+                        color: white; 
+                        padding: 5px; 
+                        border-radius: 5px;
+                    """)
                     show_btn.clicked.connect(lambda checked, d=data, btn=show_btn: self.toggle_password(d, btn))
                     layout.addWidget(show_btn)
 
                     copy_btn = QPushButton("Copy")
                     copy_btn.setFont(QFont("Montserrat", 10))
-                    copy_btn.setStyleSheet("background: #10B981; color: white; padding: 5px; border-radius: 5px;")
+                    copy_btn.setStyleSheet("""
+                        background: #10B981; 
+                        color: white; 
+                        padding: 5px; 
+                        border-radius: 5px;
+                    """)
                     copy_btn.clicked.connect(lambda checked, d=data: self.copy_password(d))
                     layout.addWidget(copy_btn)
 
                     edit_btn = QPushButton("Edit")
                     edit_btn.setFont(QFont("Montserrat", 10))
-                    edit_btn.setStyleSheet("background: #FFD166; color: black; padding: 5px; border-radius: 5px;")
+                    edit_btn.setStyleSheet("""
+                        background: #FFD166; 
+                        color: black; 
+                        padding: 5px; 
+                        border-radius: 5px;
+                    """)
                     edit_btn.clicked.connect(lambda checked, d=data: self.show_edit_credential(d))
                     layout.addWidget(edit_btn)
 
                     delete_btn = QPushButton("Delete")
                     delete_btn.setFont(QFont("Montserrat", 10))
-                    delete_btn.setStyleSheet("background: #FF6B6B; color: white; padding: 5px; border-radius: 5px;")
+                    delete_btn.setStyleSheet("""
+                        background: #FF6B6B; 
+                        color: white; 
+                        padding: 5px; 
+                        border-radius: 5px;
+                    """)
                     delete_btn.clicked.connect(lambda checked, d=data: self.delete_credential(d["doc_id"]))
                     layout.addWidget(delete_btn)
 
-                    widget.adjustSize()
                     item.setSizeHint(widget.sizeHint().grownBy(QMargins(0, 10, 0, 10)))
                     credential_list.addItem(item)
                     credential_list.setItemWidget(item, widget)
-            print(f"Filtered credentials found: {count}")
 
         search_bar.textChanged.connect(update_credential_list)
         category_filter.currentTextChanged.connect(update_credential_list)
         update_credential_list()
-
-        if credential_list.count() == 0:
-            no_creds = QLabel("No credentials found.")
-            no_creds.setFont(QFont("Open Sans", 12))
-            no_creds.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
-            self.content_layout.addWidget(no_creds, alignment=Qt.AlignmentFlag.AlignCenter)
-
         self.content_layout.addWidget(credential_list, stretch=1)
 
     def toggle_password(self, data, button):
         password_label = self.password_labels.get(data["doc_id"])
-        if not password_label:
-            print(f"Error: No password label found for doc_id {data['doc_id']}")
-            return
         if button.text() == "Show":
-            try:
-                password = decrypt_password(data, self.master_password, self.private_key)
-                password_label.setText(password)
-                button.setText("Hide")
-            except Exception as e:
-                print(f"Failed to decrypt password: {e}")
+            password = decrypt_password(data, self.master_password, self.private_key)
+            password_label.setText(password)
+            button.setText("Hide")
         else:
             password_label.setText("••••••••")
             button.setText("Show")
 
     def copy_password(self, data):
-        try:
-            password = decrypt_password(data, self.master_password, self.private_key)
-            clipboard = QApplication.clipboard()
-            clipboard.setText(password)
-            print(f"Copied password for {data['website']} to clipboard")
-        except Exception as e:
-            print(f"Failed to copy password: {e}")
+        password = decrypt_password(data, self.master_password, self.private_key)
+        clipboard = QApplication.clipboard()
+        clipboard.setText(password)
 
     def delete_credential(self, doc_id):
         credentials_ref.document(doc_id).delete()
-        print(f"Deleted credential with Doc ID: {doc_id}")
         self.show_view_credentials()
 
     def show_edit_credential(self, data):
@@ -699,10 +1020,8 @@ class PasswordManagerWindow(QMainWindow):
         for label, key, value, placeholder in [
             ("Website", "website", data["website"], "e.g., example.com"),
             ("Username", "username", data["username"], "e.g., yourname"),
-            ("Password", "password", decrypt_password(data, self.master_password, self.private_key),
-             "Enter your password"),
+            ("Password", "password", decrypt_password(data, self.master_password, self.private_key), "Enter your password"),
             ("Category", "category", data.get("category", ""), "e.g., Work, Personal")
-            # Changed from "Tag" to "Category"
         ]:
             lbl = QLabel(label)
             lbl.setFont(QFont("Open Sans", 12))
@@ -727,7 +1046,6 @@ class PasswordManagerWindow(QMainWindow):
             self.content_layout.addWidget(entry)
             entries[key] = entry
 
-        # Password Strength Indicator
         strength_label = QLabel("Password Strength: N/A")
         strength_label.setFont(QFont("Open Sans", 12))
         strength_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
@@ -744,7 +1062,7 @@ class PasswordManagerWindow(QMainWindow):
                 strength_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
 
         entries["password"].textChanged.connect(update_strength)
-        update_strength()  # Initial check
+        update_strength()
 
         generate_btn = QPushButton("Generate Password")
         generate_btn.setFont(QFont("Montserrat", 12))
@@ -759,85 +1077,35 @@ class PasswordManagerWindow(QMainWindow):
 
         save_btn = QPushButton("Save Changes")
         save_btn.setFont(QFont("Montserrat", 16, QFont.Weight.Bold))
-        save_btn.setStyleSheet("background: #4A90E2; color: white; padding: 10px; border-radius: 8px;")
+        save_btn.setStyleSheet("""
+            background: #4A90E2; 
+            color: white; 
+            padding: 10px; 
+            border-radius: 8px;
+        """)
         save_btn.clicked.connect(lambda: self.update_credential(data["doc_id"], entries))
         self.content_layout.addWidget(save_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
-    def login(self):
-        try:
-            user_id = self.entries["username"].text()
-            master_password = self.entries["password"].text()
-            doc = users_ref.document(user_id).get()
-            print(f"Logging in user: {user_id}")
-            if doc.exists:
-                encrypted_private_key = doc.to_dict()["encrypted_private_key"]
-                self.public_key = doc.to_dict()["public_key"]
-                print(f"Retrieved encrypted private key: {encrypted_private_key[:20]}...")
-                self.private_key = decrypt_with_master_password(encrypted_private_key, master_password)
-                if self.private_key is None:
-                    raise ValueError("Failed to decrypt private key - wrong master password?")
-                self.user_id = user_id
-                self.master_password = master_password
-                print(f"Login successful for {user_id}")
-                for btn in self.sidebar_buttons.values():
-                    btn.setEnabled(True)
-                self.reset_inactivity_timer()
-                self.show_view_credentials()
-            else:
-                self.public_key, self.private_key = generate_and_store_keys(user_id, master_password)
-                self.user_id = user_id
-                self.master_password = master_password
-                print(f"New user created: {user_id}")
-                for btn in self.sidebar_buttons.values():
-                    btn.setEnabled(True)
-                self.reset_inactivity_timer()
-                self.show_welcome_guide()
-        except Exception as e:
-            error_label = QLabel(f"Login failed: {str(e)}")
-            error_label.setFont(QFont("Open Sans", 12))
-            error_label.setStyleSheet("color: red;")
-            self.content_layout.addWidget(error_label, alignment=Qt.AlignmentFlag.AlignCenter)
-
-    def logout(self):
-        self.inactivity_timer.stop()
-        self.user_id = None
-        self.master_password = None
-        self.public_key = None
-        self.private_key = None
-        self.password_labels.clear()
-        for btn in self.sidebar_buttons.values():
-            btn.setEnabled(False)
-        print("Logged out")
-        self.show_login()
-
     def store_credential(self, entries):
-        category = entries["category"].text()
-        print(f"Storing credential with category: '{category}'")  # Debug
         encrypted_data = encrypt_password(entries["password"].text(), self.master_password, self.public_key)
-        doc_ref = credentials_ref.add({
+        credentials_ref.add({
             "user_id": self.user_id,
             "website": entries["website"].text(),
             "username": entries["username"].text(),
-            "category": category,  # Changed from "tag" to "category"
+            "category": entries["category"].text(),
             **encrypted_data
         })
-        print(
-            f"Credential saved for {self.user_id}: {entries['website']} (Doc ID: {doc_ref[1].id}, Category: '{category}')")
         self.show_view_credentials()
 
     def update_credential(self, doc_id, entries):
-        category = entries["category"].text()
-        print(f"Updating credential with category: '{category}'")  # Debug
         encrypted_data = encrypt_password(entries["password"].text(), self.master_password, self.public_key)
         credentials_ref.document(doc_id).update({
             "website": entries["website"].text(),
             "username": entries["username"].text(),
-            "category": category,  # Changed from "tag" to "category"
+            "category": entries["category"].text(),
             **encrypted_data
         })
-        print(f"Credential updated: {entries['website']} (Doc ID: {doc_id}, Category: '{category}')")
         self.show_view_credentials()
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
