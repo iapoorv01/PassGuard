@@ -118,8 +118,8 @@ def check_password_strength(password):
     if score <= 2: return "Weak", "#FF6B6B"
     elif score <= 4: return "Medium", "#FFD166"
     else: return "Strong", "#10B981"
+#main window
 
-# Main Window
 class PasswordManagerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -127,16 +127,16 @@ class PasswordManagerWindow(QMainWindow):
         self.setGeometry(100, 100, 1000, 700)
         self.is_dark_mode = False
 
+        # Central widget and main layout
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout = QHBoxLayout(central_widget)  # Changed to self.main_layout for consistency
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
 
         # Sidebar
-        sidebar = QFrame()
-        sidebar.setFixedWidth(250)
-        sidebar.setStyleSheet("background: #4A90E2; border-radius: 10px;")
-        sidebar_layout = QVBoxLayout(sidebar)
+        self.sidebar = QFrame()
+        self.sidebar.setFixedWidth(250)
+        sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(15, 30, 15, 30)
         logo = QLabel("🔒 PassGuard")
         logo.setFont(QFont("Montserrat", 22, QFont.Weight.Bold))
@@ -173,14 +173,39 @@ class PasswordManagerWindow(QMainWindow):
         self.content_layout.setContentsMargins(20, 20, 20, 20)
         self.password_labels = {}
 
-        main_layout.addWidget(sidebar)
-        main_layout.addWidget(self.content, stretch=1)
+        # Add widgets to main layout
+        self.main_layout.addWidget(self.sidebar)
+        self.main_layout.addWidget(self.content, stretch=1)
 
         # Auto-Logout Timer
         self.inactivity_timer = QTimer(self)
         self.inactivity_timer.timeout.connect(self.logout)
         self.inactivity_timer.setInterval(300000)  # 5 minutes
 
+        # Add floating developer bubble
+        self.dev_bubble = QPushButton("👨‍💻", self)
+        self.dev_bubble.setFixedSize(50, 50)
+        self.dev_bubble.setStyleSheet("""
+            QPushButton {
+                background: #10B981;
+                color: white;
+                border-radius: 25px;
+                border: none;
+                font-size: 20px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            }
+            QPushButton:hover {
+                background: #059669;
+            }
+        """)
+        self.dev_bubble.move(self.width() - 70, self.height() - 70)
+        self.dev_bubble.clicked.connect(self.show_dev_info)
+        self.dev_bubble.setToolTip("Contact Developers")
+
+        # Ensure bubble stays in position when window resizes
+        self.resizeEvent = self.update_bubble_position
+
+        # Initialize UI
         self.apply_theme()
         self.showFullScreen()
         self.installEventFilter(self)
@@ -190,9 +215,196 @@ class PasswordManagerWindow(QMainWindow):
         if self.is_dark_mode:
             self.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2D2D2D, stop:1 #1A1A1A);")
             self.content.setStyleSheet("background: rgba(50, 50, 50, 0.95); border-radius: 12px;")
+            self.sidebar.setStyleSheet("background: #fc6a03; border-radius: 10px;")
         else:
             self.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #E0E7FF, stop:1 #FFFFFF);")
             self.content.setStyleSheet("background: rgba(255, 255, 255, 0.95); border-radius: 12px;")
+            self.sidebar.setStyleSheet("background: #4A90E2; border-radius: 10px;")
+
+    def toggle_theme(self):
+        self.is_dark_mode = not self.is_dark_mode
+        self.apply_theme()
+        self.show_settings()
+
+    def update_bubble_position(self, event):
+        self.dev_bubble.move(self.width() - 70, self.height() - 70)
+        super().resizeEvent(event)
+
+    def show_dev_info(self):
+        self.clear_content()
+        title = QLabel("Meet the Developers")
+        title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
+        self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        dev_container = QWidget()
+        dev_layout = QVBoxLayout(dev_container)
+        dev_layout.setSpacing(20)
+
+        # Developer 1
+        dev1_frame = QFrame()
+        dev1_layout = QHBoxLayout(dev1_frame)
+        dev1_icon = QLabel("👨‍💻")
+        dev1_icon.setFont(QFont("Open Sans", 30))
+        dev1_icon.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
+        dev1_layout.addWidget(dev1_icon)
+        dev1_info = QLabel("Apoorv Gupta")
+        dev1_info.setFont(QFont("Open Sans", 18, QFont.Weight.Medium))
+        dev1_info.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
+        dev1_layout.addWidget(dev1_info)
+        dev1_btn = QPushButton("LinkedIn")
+        dev1_btn.setFont(QFont("Montserrat", 12))
+        dev1_btn.setStyleSheet("""
+            background: #0A66C2;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 5px;
+        """)
+        dev1_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.linkedin.com/in/-apoorv-/")))
+        dev1_layout.addWidget(dev1_btn)
+        dev_layout.addWidget(dev1_frame)
+
+        # Developer 2
+        dev2_frame = QFrame()
+        dev2_layout = QHBoxLayout(dev2_frame)
+        dev2_icon = QLabel("👨‍💻")
+        dev2_icon.setFont(QFont("Open Sans", 30))
+        dev2_icon.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
+        dev2_layout.addWidget(dev2_icon)
+        dev2_info = QLabel("Yash Verdhan ")  # Replace with actual name
+        dev2_info.setFont(QFont("Open Sans", 18, QFont.Weight.Medium))
+        dev2_info.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
+        dev2_layout.addWidget(dev2_info)
+        dev2_btn = QPushButton("LinkedIn")
+        dev2_btn.setFont(QFont("Montserrat", 12))
+        dev2_btn.setStyleSheet("""
+            background: #0A66C2;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 5px;
+        """)
+        dev2_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("www.linkedin.com/in/yash-verdhan")))  # Replace with actual URL
+        dev2_layout.addWidget(dev2_btn)
+        dev_layout.addWidget(dev2_frame)
+
+        back_btn = QPushButton("Back")
+        back_btn.setFont(QFont("Montserrat", 12))
+        back_btn.setStyleSheet("""
+            background: #4A90E2;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 5px;
+        """)
+        back_btn.clicked.connect(self.show_settings if hasattr(self, 'user_id') and self.user_id else self.show_login)
+        dev_layout.addWidget(back_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.content_layout.addWidget(dev_container, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def show_settings(self):
+        self.clear_content()
+        self.content_layout.setSpacing(20)
+        settings_container = QWidget()
+        settings_container.setFixedWidth(600)
+        settings_container.setFixedHeight(500)
+        settings_layout = QVBoxLayout(settings_container)
+        settings_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        settings_layout.setSpacing(20)
+
+        title = QLabel("Settings")
+        title.setFont(QFont("Montserrat", 48, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
+        settings_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        account_frame = QFrame()
+        account_frame.setStyleSheet(f"""
+            background: {'#F9FAFB' if not self.is_dark_mode else '#313131'};
+            border-radius: 10px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        """)
+        account_layout = QHBoxLayout(account_frame)
+        account_icon = QLabel("👤")
+        account_icon.setFont(QFont("Open Sans", 50))
+        account_icon.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
+        account_layout.addWidget(account_icon)
+        account_label = QLabel(f"{self.user_id if hasattr(self, 'user_id') else 'Not logged in'}")
+        account_label.setFont(QFont("Open Sans", 38, QFont.Weight.Medium))
+        account_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
+        account_layout.addWidget(account_label)
+        settings_layout.addWidget(account_frame)
+
+        theme_btn = QPushButton("Switch to Dark Mode" if not self.is_dark_mode else "Switch to Light Mode")
+        theme_btn.setFont(QFont("Montserrat", 14, QFont.Weight.Bold))
+        theme_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};
+                color: white;
+                padding: 12px 25px;
+                border-radius: 8px;
+                border: none;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+            }}
+            QPushButton:hover {{
+                background: {'#357ABD' if not self.is_dark_mode else '#ff8c38'};
+            }}
+        """)
+        theme_btn.clicked.connect(self.toggle_theme)
+        settings_layout.addWidget(theme_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        logout_btn = QPushButton("Logout")
+        logout_btn.setFont(QFont("Montserrat", 14, QFont.Weight.Bold))
+        logout_btn.setStyleSheet("""
+            QPushButton {
+                background: #FF6B6B;
+                color: white;
+                padding: 12px 25px;
+                border-radius: 8px;
+                border: none;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+            }
+            QPushButton:hover {
+                background: #E55A5A;
+            }
+        """)
+        logout_btn.clicked.connect(self.logout)
+        settings_layout.addWidget(logout_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        contact_btn = QPushButton("Contact Developer")
+        contact_btn.setFont(QFont("Montserrat", 14, QFont.Weight.Bold))
+        contact_btn.setStyleSheet("""
+            QPushButton {
+                background: #10B981;
+                color: white;
+                padding: 12px 25px;
+                border-radius: 8px;
+                border: none;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+            }
+            QPushButton:hover {
+                background: #059669;
+            }
+        """)
+        contact_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.linkedin.com/in/-apoorv-/")))
+        settings_layout.addWidget(contact_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        about_btn = QPushButton("About PassGuard")
+        about_btn.setFont(QFont("Montserrat", 14, QFont.Weight.Bold))
+        about_btn.setStyleSheet("""
+            QPushButton {
+                background: #6B7280;
+                color: white;
+                padding: 12px 25px;
+                border-radius: 8px;
+                border: none;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+            }
+            QPushButton:hover {
+                background: #4B5563;
+            }
+        """)
+        about_btn.clicked.connect(self.show_about)
+        settings_layout.addWidget(about_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.content_layout.addWidget(settings_container, alignment=Qt.AlignmentFlag.AlignCenter)
 
     def eventFilter(self, obj, event):
         if event.type() in (QEvent.Type.MouseMove, QEvent.Type.KeyPress, QEvent.Type.MouseButtonPress):
@@ -230,7 +442,7 @@ class PasswordManagerWindow(QMainWindow):
         self.clear_content()
         title = QLabel("Welcome Back")
         title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.entries = {}
@@ -253,9 +465,6 @@ class PasswordManagerWindow(QMainWindow):
             """)
             entry.setPlaceholderText(placeholder)
             entry.setEchoMode(echo)
-            palette = entry.palette()
-            palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
-            entry.setPalette(palette)
             self.content_layout.addWidget(entry)
             self.entries[key] = entry
 
@@ -286,10 +495,10 @@ class PasswordManagerWindow(QMainWindow):
         self.clear_content()
         title = QLabel("Recover Your Account")
         title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        user_id = self.entries["username"].text()
+        user_id = self.entries["username"].text() if hasattr(self, 'entries') and "username" in self.entries else ""
         if not user_id:
             error = QLabel("Please enter your username first.")
             error.setFont(QFont("Open Sans", 12))
@@ -321,248 +530,6 @@ class PasswordManagerWindow(QMainWindow):
             desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             btn_layout.addWidget(desc_label)
             self.content_layout.addWidget(btn_frame, alignment=Qt.AlignmentFlag.AlignCenter)
-
-    def recover_with_face(self, user_id):
-        doc = users_ref.document(user_id).get()
-        if not doc.exists or "face_recovery_key" not in doc.to_dict():
-            self.show_error("Face scan not set up for this user.")
-            return
-
-        face_encoding = self.capture_face()
-        if face_encoding is None:
-            self.show_error("Failed to capture face. Ensure webcam is connected and face is visible.")
-            return
-
-        stored_encoding = base64.b64decode(doc.to_dict()["face_encoding"])
-        if face_recognition.compare_faces([stored_encoding], face_encoding)[0]:
-            private_key = decrypt_with_key(doc.to_dict()["face_recovery_key"], base64.b64encode(face_encoding).decode())
-            self.reset_master_password(user_id, private_key)
-        else:
-            self.show_error("Face does not match.")
-
-    def recover_with_device(self, user_id):
-        doc = users_ref.document(user_id).get()
-        if not doc.exists or "device_recovery_key" not in doc.to_dict():
-            self.show_error("Device fingerprint not set up for this user.")
-            return
-
-        device_id = self.get_device_id()
-        private_key = decrypt_with_key(doc.to_dict()["device_recovery_key"], device_id)
-        if private_key:
-            self.reset_master_password(user_id, private_key)
-        else:
-            self.show_error("This device does not match the original.")
-
-    def recover_with_contact(self, user_id):
-        doc = users_ref.document(user_id).get()
-        if not doc.exists or "contact_recovery_key" not in doc.to_dict():
-            self.show_error("Trusted contact not set up for this user.")
-            return
-
-        self.clear_content()
-        title = QLabel("Trusted Contact Recovery")
-        title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
-        self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        lbl = QLabel("Enter recovery key from your trusted contact:")
-        lbl.setFont(QFont("Open Sans", 12))
-        lbl.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
-        self.content_layout.addWidget(lbl)
-        key_entry = QLineEdit()
-        key_entry.setFont(QFont("Open Sans", 14))
-        key_entry.setStyleSheet(f"""
-            background: {'#F5F6F5' if not self.is_dark_mode else '#3A3A3A'}; 
-            border: none; 
-            padding: 8px; 
-            border-radius: 5px; 
-            color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
-        """)
-        key_entry.setPlaceholderText("e.g., paste key provided by your contact")
-        palette = key_entry.palette()
-        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
-        key_entry.setPalette(palette)
-        self.content_layout.addWidget(key_entry)
-
-        submit_btn = QPushButton("Submit")
-        submit_btn.setFont(QFont("Montserrat", 12))
-        submit_btn.setStyleSheet("""
-            background: #4A90E2; 
-            color: white; 
-            padding: 8px 20px; 
-            border-radius: 5px;
-        """)
-        submit_btn.clicked.connect(lambda: self.verify_contact_key(user_id, key_entry.text()))
-        self.content_layout.addWidget(submit_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-
-    def verify_contact_key(self, user_id, contact_key):
-        doc = users_ref.document(user_id).get()
-        private_key = decrypt_with_key(doc.to_dict()["contact_recovery_key"], contact_key)
-        if private_key:
-            self.reset_master_password(user_id, private_key)
-        else:
-            self.show_error("Invalid recovery key.")
-
-    def reset_master_password(self, user_id, private_key):
-        self.clear_content()
-        title = QLabel("Reset Master Password")
-        title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
-        self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        new_pass = QLineEdit()
-        new_pass.setEchoMode(QLineEdit.EchoMode.Password)
-        new_pass.setStyleSheet(f"""
-            background: {'#F5F6F5' if not self.is_dark_mode else '#3A3A3A'}; 
-            border: none; 
-            padding: 8px; 
-            border-radius: 5px; 
-            color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
-        """)
-        new_pass.setPlaceholderText("Enter new master password")
-        palette = new_pass.palette()
-        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
-        new_pass.setPalette(palette)
-        self.content_layout.addWidget(QLabel("New Master Password:"))
-        self.content_layout.addWidget(new_pass)
-
-        confirm_pass = QLineEdit()
-        confirm_pass.setEchoMode(QLineEdit.EchoMode.Password)
-        confirm_pass.setStyleSheet(f"""
-            background: {'#F5F6F5' if not self.is_dark_mode else '#3A3A3A'}; 
-            border: none; 
-            padding: 8px; 
-            border-radius: 5px; 
-            color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
-        """)
-        confirm_pass.setPlaceholderText("Confirm new master password")
-        palette = confirm_pass.palette()
-        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
-        confirm_pass.setPalette(palette)
-        self.content_layout.addWidget(QLabel("Confirm Password:"))
-        self.content_layout.addWidget(confirm_pass)
-
-        save_btn = QPushButton("Save")
-        save_btn.setFont(QFont("Montserrat", 16, QFont.Weight.Bold))
-        save_btn.setStyleSheet("""
-            background: #4A90E2; 
-            color: white; 
-            padding: 10px; 
-            border-radius: 8px;
-        """)
-        save_btn.clicked.connect(lambda: self.save_new_password(user_id, private_key, new_pass.text(), confirm_pass.text()))
-        self.content_layout.addWidget(save_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-
-    def save_new_password(self, user_id, private_key, new_pass, confirm_pass):
-        if new_pass != confirm_pass:
-            self.show_error("Passwords do not match.")
-            return
-        encrypted_private_key = encrypt_with_key(private_key, new_pass)
-        users_ref.document(user_id).update({"encrypted_private_key": encrypted_private_key})
-        self.master_password = new_pass
-        self.private_key = private_key
-        self.user_id = user_id
-        self.public_key = users_ref.document(user_id).get().to_dict()["public_key"]
-        for btn in self.sidebar_buttons.values():
-            btn.setEnabled(True)
-        self.reset_inactivity_timer()
-        self.show_view_credentials()
-
-    def show_error(self, message):
-        self.clear_content()
-        error = QLabel(message)
-        error.setFont(QFont("Open Sans", 14))
-        error.setStyleSheet("color: #FF6B6B;")
-        self.content_layout.addWidget(error, alignment=Qt.AlignmentFlag.AlignCenter)
-        back_btn = QPushButton("Back to Login")
-        back_btn.setFont(QFont("Montserrat", 12))
-        back_btn.setStyleSheet("""
-            background: #4A90E2; 
-            color: white; 
-            padding: 8px 20px; 
-            border-radius: 5px;
-        """)
-        back_btn.clicked.connect(self.show_login)
-        self.content_layout.addWidget(back_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-
-    def capture_face(self):
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            print("Error: Could not open webcam.")
-            return None
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Could not read frame.")
-            cap.release()
-            return None
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        encodings = face_recognition.face_encodings(rgb_frame)
-        cap.release()
-        return encodings[0] if encodings else None
-
-    def get_device_id(self):
-        return str(uuid.getnode()) + str(psutil.disk_partitions()[0].device if psutil.disk_partitions() else "default")
-
-    def prompt_setup_recovery(self):
-        self.clear_content()
-        title = QLabel("Set Up Recovery Options")
-        title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
-        self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        face_label = QLabel("Face Scan will be captured automatically.")
-        face_label.setFont(QFont("Open Sans", 12))
-        face_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
-        self.content_layout.addWidget(face_label, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        device_label = QLabel("Device fingerprint will be set for this device.")
-        device_label.setFont(QFont("Open Sans", 12))
-        device_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
-        self.content_layout.addWidget(device_label, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        contact_label = QLabel("Trusted Contact Username (optional):")
-        contact_label.setFont(QFont("Open Sans", 12))
-        contact_label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
-        self.content_layout.addWidget(contact_label)
-        contact_entry = QLineEdit()
-        contact_entry.setFont(QFont("Open Sans", 14))
-        contact_entry.setStyleSheet(f"""
-            background: {'#F5F6F5' if not self.is_dark_mode else '#3A3A3A'}; 
-            border: none; 
-            padding: 8px; 
-            border-radius: 5px; 
-            color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
-        """)
-        contact_entry.setPlaceholderText("e.g., friend123")
-        palette = contact_entry.palette()
-        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
-        contact_entry.setPalette(palette)
-        self.content_layout.addWidget(contact_entry)
-
-        submit_btn = QPushButton("Complete Setup")
-        submit_btn.setFont(QFont("Montserrat", 16, QFont.Weight.Bold))
-        submit_btn.setStyleSheet("""
-            background: #4A90E2; 
-            color: white; 
-            padding: 10px; 
-            border-radius: 8px;
-        """)
-        submit_btn.clicked.connect(lambda: self.finish_setup(contact_entry.text()))
-        self.content_layout.addWidget(submit_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-
-    def finish_setup(self, trusted_contact_id):
-        face_encoding = self.capture_face()
-        if face_encoding is None:
-            self.show_error("Failed to capture face. Try again.")
-            return
-        device_id = self.get_device_id()
-        self.public_key, self.private_key = generate_and_store_keys(
-            self.user_id, self.master_password, face_encoding, device_id, trusted_contact_id or None
-        )
-        for btn in self.sidebar_buttons.values():
-            btn.setEnabled(True)
-        self.reset_inactivity_timer()
-        self.show_welcome_guide()
 
     def login(self):
         try:
@@ -617,7 +584,7 @@ class PasswordManagerWindow(QMainWindow):
 
         title = QLabel("Settings")
         title.setFont(QFont("Montserrat", 48, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         settings_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         account_frame = QFrame()
@@ -629,7 +596,7 @@ class PasswordManagerWindow(QMainWindow):
         account_layout = QHBoxLayout(account_frame)
         account_icon = QLabel("👤")
         account_icon.setFont(QFont("Open Sans", 50))
-        account_icon.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        account_icon.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         account_layout.addWidget(account_icon)
         account_label = QLabel(f"{self.user_id}")
         account_label.setFont(QFont("Open Sans", 38, QFont.Weight.Medium))
@@ -720,7 +687,7 @@ class PasswordManagerWindow(QMainWindow):
         self.clear_content()
         title = QLabel("About PassGuard")
         title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         about_text = QLabel(
@@ -749,7 +716,7 @@ class PasswordManagerWindow(QMainWindow):
         self.clear_content()
         title = QLabel("Welcome to PassGuard!")
         title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         guide_text = QLabel(
@@ -780,7 +747,7 @@ class PasswordManagerWindow(QMainWindow):
         self.clear_content()
         title = QLabel("Add Credential")
         title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         entries = {}
@@ -855,7 +822,7 @@ class PasswordManagerWindow(QMainWindow):
         self.clear_content()
         title = QLabel("View Credentials")
         title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         search_bar = QLineEdit()
@@ -933,7 +900,7 @@ class PasswordManagerWindow(QMainWindow):
 
                     password_label = QLabel("••••••••")
                     password_label.setFont(QFont("Open Sans", 12))
-                    password_label.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+                    password_label.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
                     self.password_labels[data["doc_id"]] = password_label
                     layout.addWidget(password_label)
 
@@ -1013,7 +980,7 @@ class PasswordManagerWindow(QMainWindow):
         self.clear_content()
         title = QLabel("Edit Credential")
         title.setFont(QFont("Montserrat", 30, QFont.Weight.Bold))
-        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#38b6ff'};")
+        title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         entries = {}
@@ -1115,3 +1082,4 @@ if __name__ == "__main__":
     app.setPalette(palette)
     window = PasswordManagerWindow()
     sys.exit(app.exec())
+    
