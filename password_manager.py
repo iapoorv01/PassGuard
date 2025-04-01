@@ -1082,4 +1082,4 @@ if __name__ == "__main__":
     app.setPalette(palette)
     window = PasswordManagerWindow()
     sys.exit(app.exec())
-    
+    #code finished
