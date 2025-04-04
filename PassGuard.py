@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
 from PyQt6.QtCore import Qt, QEvent, QMargins, QUrl, QTimer
 from PyQt6.QtGui import QPalette, QColor, QFont, QClipboard, QDesktopServices
 from firebase_admin import credentials, firestore, initialize_app
+import os
 from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto.Protocol.KDF import scrypt
 from Crypto.PublicKey import RSA
@@ -18,9 +19,20 @@ import psutil
 import uuid
 import numpy as np
 from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
+
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        # If running as a PyInstaller bundle
+        return sys._MEIPASS
+    else:
+        # If running as a normal Python script
+        return os.path.dirname(os.path.abspath(__file__))
 
 # Initialize Firebase
-cred = credentials.Certificate("password_manager.json")
+base_path = get_base_path()
+json_path = os.path.join(base_path, "password_manager.json")
+cred = credentials.Certificate(json_path)
 initialize_app(cred)
 db = firestore.client()
 users_ref = db.collection("users")
@@ -762,15 +774,15 @@ class PasswordManagerWindow(QMainWindow):
         message.setStyleSheet("color: #FF6B6B; padding: 20px;")
         self.content_layout.addWidget(message, alignment=Qt.AlignmentFlag.AlignCenter)
 
-
     def show_login(self):
         self.clear_content()
         self.content_layout.setSpacing(20)
 
         # Create a container to group title and login frame
         container = QFrame()
+        container.setObjectName("loginContainer")  # For animation
         container_layout = QVBoxLayout(container)
-        container_layout.setSpacing(10)  # Small gap between title and frame
+        container_layout.setSpacing(10)
 
         # Title with gradient flair
         title = QLabel("Welcome Back")
@@ -783,8 +795,8 @@ class PasswordManagerWindow(QMainWindow):
 
         # Frame for all login elements
         login_frame = QFrame()
-        login_frame.setFixedWidth(400)  # Keep width at 400px
-        login_frame.setFixedHeight(650)  # Your taller height
+        login_frame.setFixedWidth(400)
+        login_frame.setFixedHeight(600)  # Slightly reduced height for better balance
         login_frame.setStyleSheet(f"""
             background: {'#F9FAFB' if not self.is_dark_mode else '#3A3A3A'};
             border-radius: 15px;
@@ -792,7 +804,7 @@ class PasswordManagerWindow(QMainWindow):
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         """)
         login_layout = QVBoxLayout(login_frame)
-        login_layout.setSpacing(20)  # Main layout spacing
+        login_layout.setSpacing(25)  # Increased spacing for better breathing room
 
         # Input fields with icons
         self.entries = {}
@@ -803,6 +815,7 @@ class PasswordManagerWindow(QMainWindow):
             input_frame = QFrame()
             input_frame.setStyleSheet(f"""
                 background: {'#FFFFFF' if not self.is_dark_mode else '#4A4A4A'};
+                border: 1px solid {'#E0E7FF' if not self.is_dark_mode else '#5A5A5A'};
                 border-radius: 8px;
                 padding: 5px;
                 box-shadow: 0 1px 3px rgba(0,0,0,0.1);
@@ -833,6 +846,9 @@ class PasswordManagerWindow(QMainWindow):
             """)
             entry.setPlaceholderText(placeholder)
             entry.setEchoMode(echo)
+            palette = entry.palette()
+            palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
+            entry.setPalette(palette)
             input_sub_layout.addWidget(entry)
             input_layout.addLayout(input_sub_layout)
 
@@ -840,21 +856,22 @@ class PasswordManagerWindow(QMainWindow):
             self.entries[key] = entry
 
         # Add stretch to position buttons lower
-        login_layout.addStretch(2)  # Push buttons down a bit
+        login_layout.addStretch(1)
 
         # Button group in a sub-layout
         button_frame = QFrame()
         button_layout = QVBoxLayout(button_frame)
-        button_layout.setSpacing(20)  # Tight gap between buttons
+        button_layout.setSpacing(35)
 
         # Login Button with icon and hover effect
         login_btn = QPushButton("🚀 Login")
         login_btn.setFont(QFont("Montserrat", 16, QFont.Weight.Bold))
+        login_btn.setMinimumHeight(40)
         login_btn.setStyleSheet("""
             QPushButton {
                 background: #4A90E2; 
                 color: white; 
-                padding: 12px 30px; 
+                padding: 0px 30px; 
                 border-radius: 8px;
                 border: none;
                 box-shadow: 0 2px 6px rgba(0,0,0,0.15);
@@ -872,6 +889,7 @@ class PasswordManagerWindow(QMainWindow):
         # Forgot Password Button with icon and hover effect
         forgot_btn = QPushButton("❓ Forgot Password?")
         forgot_btn.setFont(QFont("Montserrat", 12, QFont.Weight.Bold))
+        forgot_btn.setMinimumHeight(40)
         forgot_btn.setStyleSheet("""
             QPushButton {
                 background: #FFD166; 
@@ -891,34 +909,39 @@ class PasswordManagerWindow(QMainWindow):
         forgot_btn.setToolTip("Recover your account")
         button_layout.addWidget(forgot_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Add button group to main layout
         login_layout.addWidget(button_frame, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # PassGuard Logo Image
         logo_label = QLabel()
-        logo_pixmap = QPixmap("assets/logo.png")  # Replace with your logo file path
+        logo_path = os.path.join(get_base_path(), "logo.png")
+        logo_pixmap = QPixmap(logo_path)
         if not logo_pixmap.isNull():
             logo_pixmap = logo_pixmap.scaled(200, 200, Qt.AspectRatioMode.KeepAspectRatio,
                                              Qt.TransformationMode.SmoothTransformation)
             logo_label.setPixmap(logo_pixmap)
         else:
-            # Fallback if logo file is missing
             logo_label.setText("PassGuard Logo")
             logo_label.setFont(QFont("Montserrat", 16, QFont.Weight.Bold))
             logo_label.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         login_layout.addWidget(logo_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Add bottom stretch to balance
-        login_layout.addStretch(1)  # Keep some space at the bottom
+        login_layout.addStretch(1)
 
-        # Add the login frame to the container
         container_layout.addWidget(login_frame, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Add stretch before and after the container to center it on screen
-        self.content_layout.addStretch(2)  # Push down from top
+        self.content_layout.addStretch(2)
         self.content_layout.addWidget(container, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.content_layout.addStretch(1)  # Push up from bottom
+        self.content_layout.addStretch(1)
+
+        # Add fade-in animation
+
+        animation = QPropertyAnimation(container, b"windowOpacity", self)
+        animation.setDuration(1000)  # 1 second
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        animation.start()
 
     def show_recovery_options(self):
         self.clear_content()
@@ -1517,11 +1540,22 @@ class PasswordManagerWindow(QMainWindow):
         title.setStyleSheet(f"color: {'#4A90E2' if not self.is_dark_mode else '#fc6a03'};")
         self.content_layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Search and Filter Container
+        filter_frame = QFrame()
+        filter_frame.setStyleSheet(f"""
+            background: {'#F9FAFB' if not self.is_dark_mode else '#3A3A3A'};
+            border-radius: 10px;
+            padding: 10px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        """)
+        filter_layout = QHBoxLayout(filter_frame)
+        filter_layout.setSpacing(10)
+
         search_bar = QLineEdit()
         search_bar.setFont(QFont("Open Sans", 14))
         search_bar.setStyleSheet(f"""
-            background: {'#F5F6F5' if not self.is_dark_mode else '#3A3A3A'}; 
-            border: none; 
+            background: {'#FFFFFF' if not self.is_dark_mode else '#4A4A4A'}; 
+            border: 1px solid {'#E0E7FF' if not self.is_dark_mode else '#5A5A5A'};
             padding: 8px; 
             border-radius: 5px; 
             color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
@@ -1530,13 +1564,13 @@ class PasswordManagerWindow(QMainWindow):
         palette = search_bar.palette()
         palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#888"))
         search_bar.setPalette(palette)
-        self.content_layout.addWidget(search_bar)
+        filter_layout.addWidget(search_bar)
 
         category_filter = QComboBox()
         category_filter.setFont(QFont("Open Sans", 12))
         category_filter.setStyleSheet(f"""
-            background: {'#F5F6F5' if not self.is_dark_mode else '#3A3A3A'}; 
-            border: none; 
+            background: {'#FFFFFF' if not self.is_dark_mode else '#4A4A4A'}; 
+            border: 1px solid {'#E0E7FF' if not self.is_dark_mode else '#5A5A5A'};
             padding: 8px; 
             border-radius: 5px; 
             color: {'#333' if not self.is_dark_mode else '#E0E7FF'};
@@ -1551,7 +1585,9 @@ class PasswordManagerWindow(QMainWindow):
                 categories.add(category)
         for category in sorted(categories):
             category_filter.addItem(category)
-        self.content_layout.addWidget(category_filter)
+        filter_layout.addWidget(category_filter)
+
+        self.content_layout.addWidget(filter_frame)
 
         credential_list = QListWidget()
         credential_list.setFont(QFont("Open Sans", 12))
@@ -1561,7 +1597,7 @@ class PasswordManagerWindow(QMainWindow):
             padding: 10px; 
             border-radius: 5px;
         """)
-        credential_list.setSpacing(5)
+        credential_list.setSpacing(8)
         credential_list.setMinimumWidth(600)
 
         def update_credential_list():
@@ -1578,9 +1614,16 @@ class PasswordManagerWindow(QMainWindow):
                 if (search_text in website or search_text in username) and \
                         (selected_category == "All Categories" or category == selected_category):
                     item = QListWidgetItem()
-                    widget = QWidget()
+                    widget = QFrame()  # Use QFrame for card-like styling
+                    widget.setStyleSheet(f"""
+                        background: {'#FFFFFF' if not self.is_dark_mode else '#4A4A4A'};
+                        border-radius: 8px;
+                        padding: 10px;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    """)
                     layout = QHBoxLayout(widget)
-                    layout.setContentsMargins(5, 5, 5, 5)
+                    layout.setContentsMargins(10, 10, 10, 10)
+                    layout.setSpacing(15)
 
                     label_text = f"Website: {data['website']} | Username: {data['username']}"
                     if category:
@@ -1588,7 +1631,8 @@ class PasswordManagerWindow(QMainWindow):
                     label = QLabel(label_text)
                     label.setFont(QFont("Open Sans", 12))
                     label.setStyleSheet(f"color: {'#333' if not self.is_dark_mode else '#E0E7FF'};")
-                    layout.addWidget(label)
+                    label.setToolTip(label_text)  # Add tooltip for full text
+                    layout.addWidget(label, stretch=1)
 
                     password_label = QLabel("••••••••")
                     password_label.setFont(QFont("Open Sans", 12))
@@ -1615,6 +1659,7 @@ class PasswordManagerWindow(QMainWindow):
                         }
                     """)
                     show_btn.clicked.connect(lambda checked, d=data, btn=show_btn: self.toggle_password(d, btn))
+                    show_btn.setToolTip("Show or hide the password")
                     layout.addWidget(show_btn)
 
                     # Copy Button with icon and hover effect
@@ -1636,6 +1681,7 @@ class PasswordManagerWindow(QMainWindow):
                         }
                     """)
                     copy_btn.clicked.connect(lambda checked, d=data: self.copy_password(d))
+                    copy_btn.setToolTip("Copy password to clipboard")
                     layout.addWidget(copy_btn)
 
                     # Edit Button with icon and hover effect
@@ -1657,6 +1703,7 @@ class PasswordManagerWindow(QMainWindow):
                         }
                     """)
                     edit_btn.clicked.connect(lambda checked, d=data: self.show_edit_credential(d))
+                    edit_btn.setToolTip("Edit this credential")
                     layout.addWidget(edit_btn)
 
                     # Delete Button with icon and hover effect
@@ -1678,6 +1725,7 @@ class PasswordManagerWindow(QMainWindow):
                         }
                     """)
                     delete_btn.clicked.connect(lambda checked, d=data: self.delete_credential(d["doc_id"]))
+                    delete_btn.setToolTip("Delete this credential")
                     layout.addWidget(delete_btn)
 
                     item.setSizeHint(widget.sizeHint().grownBy(QMargins(0, 10, 0, 10)))
