@@ -79,7 +79,8 @@ decrypted = decrypt_password(encrypted, master_password, private_key)
 
 | Light Mode  Dark Mode |
 
-| ![image](https://github.com/user-attachments/assets/be34da38-0d81-4c63-afa6-eee94be6ff2c)
+|![image](https://github.com/user-attachments/assets/37e5e3e1-3ca4-4bf1-9881-2fd035c3a605)
+
    
 
 
